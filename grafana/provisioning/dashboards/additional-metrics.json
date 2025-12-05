@@ -1,0 +1,40 @@
+{
+  "dashboard": {
+    "id": null,
+    "uid": "spark-monitoring",
+    "title": "Spark Cluster Monitoring",
+    "tags": ["spark", "monitoring"],
+    "timezone": "browser",
+    "schemaVersion": 38,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Активные задачи Spark",
+        "type": "stat",
+        "datasource": "PostgreSQL",
+        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
+        "targets": [
+          {
+            "rawSql": "SELECT COUNT(*) as active_tasks FROM spark_tasks WHERE status = 'RUNNING'",
+            "format": "table"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "title": "Потребление памяти",
+        "type": "gauge",
+        "datasource": "PostgreSQL",
+        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
+        "targets": [
+          {
+            "rawSql": "SELECT (used_memory / total_memory * 100) as memory_usage FROM spark_metrics ORDER BY timestamp DESC LIMIT 1",
+            "format": "table"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,6 @@
+pyspark==3.5.1
+kafka-python==2.0.2
+psycopg2-binary==2.9.9
+pandas==1.5.3
+numpy==1.24.3
+python-dateutil==2.8.2

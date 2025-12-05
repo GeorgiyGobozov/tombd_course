@@ -1,0 +1,277 @@
+version: '3.8'
+
+services:
+  # ============ ZOOKEEPER ============
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
+  # ============ KAFKA ============
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_MESSAGE_MAX_BYTES: 134217728
+      KAFKA_REPLICA_FETCH_MAX_BYTES: 134217728
+      KAFKA_FETCH_MESSAGE_MAX_BYTES: 134217728
+    ports:
+      - "29092:29092"
+      - "9092:9092"
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============ KAFKA UI ============
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    ports:
+      - "8090:8080"
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
+  # ============ SPARK MASTER ============
+  spark-master:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-master
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+      --host spark-master
+      --port 7077
+      --webui-port 8080
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: 7077
+      SPARK_MASTER_WEBUI_PORT: 8080
+      SPARK_LOCAL_IP: spark-master
+      SPARK_USER: spark
+      HADOOP_USER_NAME: spark
+    volumes:
+      - spark-events:/tmp/spark-events
+      - spark-logs:/opt/spark/logs
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
+  # ============ SPARK WORKER 1 ============
+  spark-worker-1:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-worker-1
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077
+      --webui-port 8081
+    depends_on:
+      - spark-master
+    environment:
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 2g
+      SPARK_WORKER_PORT: 8881
+      SPARK_WORKER_WEBUI_PORT: 8081
+      SPARK_LOCAL_IP: spark-worker-1
+      SPARK_USER: spark
+      HADOOP_USER_NAME: spark
+    ports:
+      - "8081:8081"
+    volumes:
+      - spark-events:/tmp/spark-events
+      - spark-logs:/opt/spark/logs
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
+  # ============ SPARK WORKER 2 ============
+  spark-worker-2:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-worker-2
+    command: >
+      /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker
+      spark://spark-master:7077
+      --webui-port 8082
+    depends_on:
+      - spark-master
+    environment:
+      SPARK_WORKER_CORES: 2
+      SPARK_WORKER_MEMORY: 2g
+      SPARK_WORKER_PORT: 8882
+      SPARK_WORKER_WEBUI_PORT: 8082
+      SPARK_LOCAL_IP: spark-worker-2
+      SPARK_USER: spark
+      HADOOP_USER_NAME: spark
+    ports:
+      - "8082:8082"
+    volumes:
+      - spark-events:/tmp/spark-events
+      - spark-logs:/opt/spark/logs
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
+  # ============ SPARK HISTORY SERVER ============
+  spark-history-server:
+    build:
+      context: ./spark
+      dockerfile: Dockerfile
+    container_name: spark-history-server
+    command: /opt/spark/sbin/start-history-server.sh
+    depends_on:
+      - spark-master
+    ports:
+      - "18080:18080"
+    environment:
+      SPARK_HISTORY_OPTS: "-Dspark.history.fs.logDirectory=/tmp/spark-events"
+      SPARK_USER: spark
+      HADOOP_USER_NAME: spark
+    volumes:
+      - spark-events:/tmp/spark-events
+      - spark-logs:/opt/spark/logs
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
+  # ============ POSTGRES ============
+  postgres:
+    image: postgres:15
+    container_name: postgres-bigdata
+    environment:
+      POSTGRES_DB: bigdata_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d bigdata_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============ DATA PRODUCER ============
+  data-producer:
+    build:
+      context: ./producer
+      dockerfile: Dockerfile
+    container_name: data-producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER: kafka:9092
+      KAFKA_TOPIC: user_transactions
+      GENERATION_INTERVAL: 0.5
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
+  # ============ SPARK CONSUMER ============
+  spark-consumer:
+    build:
+      context: ./consumer
+      dockerfile: Dockerfile
+    container_name: spark-consumer
+    depends_on:
+      spark-master:
+        condition: service_started
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    environment:
+      SPARK_MASTER: spark://spark-master:7077
+      KAFKA_BROKER: kafka:9092
+      KAFKA_TOPIC: user_transactions
+      POSTGRES_URL: jdbc:postgresql://postgres:5432/bigdata_db
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin123
+      SPARK_USER: spark
+      HADOOP_USER_NAME: spark
+    volumes:
+      - ./consumer/spark_consumer.py:/opt/spark_consumer.py
+      - spark-events:/tmp/spark-events
+      - spark-checkpoints:/tmp/checkpoint
+    command: >
+      /opt/spark/bin/spark-submit
+      --master spark://spark-master:7077
+      --deploy-mode client
+      --conf spark.driver.memory=2g
+      --conf spark.executor.memory=2g
+      --conf spark.driver.extraJavaOptions=-Dhadoop.user.name=spark
+      --conf spark.executor.extraJavaOptions=-Dhadoop.user.name=spark
+      --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.postgresql:postgresql:42.7.0
+      /opt/spark_consumer.py
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
+  # ============ GRAFANA ============
+  grafana:
+    image: grafana/grafana:10.4.2
+    container_name: grafana
+    depends_on:
+      - postgres
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - ./grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
+networks:
+  bigdata-network:
+    driver: bridge
+
+volumes:
+  spark-events:
+  spark-logs:
+  spark-checkpoints:
+  postgres-data:
+  grafana-data:
