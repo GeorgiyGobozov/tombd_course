@@ -107,12 +107,12 @@ class BigDataStreamingConsumer:
                 StructField("transaction_currency", StringType(), True),
                 StructField("transaction_category", StringType(), True),
                 StructField("merchant", StringType(), True),
-                StructField("transaction_date", TimestampType(), True),
+                StructField("transaction_date", StringType(), True),  # Changed to StringType to match ISO format
                 StructField("payment_method", StringType(), True),
                 StructField("status", StringType(), True),
                 StructField("device", StringType(), True),
                 StructField("ip_address", StringType(), True),
-                StructField("metadata", MapType(StringType(), StringType()), True),
+                StructField("metadata", StringType(), True),  # Changed to StringType for JSON
                 StructField("data_type", StringType(), True),
                 StructField("batch_id", StringType(), True)
             ]),
@@ -125,9 +125,13 @@ class BigDataStreamingConsumer:
                 StructField("activity_type", StringType(), True),
                 StructField("page_url", StringType(), True),
                 StructField("session_duration", IntegerType(), True),
-                StructField("timestamp", TimestampType(), True),
-                StructField("device_info", MapType(StringType(), StringType()), True),
-                StructField("location", MapType(StringType(), StringType()), True),
+                StructField("timestamp", StringType(), True),  # Changed to StringType to match ISO format
+                StructField("device_info", MapType(StringType(), StringType()), True),  # Map for JSON object
+                StructField("location", StructType([
+                    StructField("city", StringType(), True),
+                    StructField("country", StringType(), True),
+                    StructField("coordinates", StringType(), True)
+                ]), True),  # Struct for location object
                 StructField("data_type", StringType(), True),
                 StructField("batch_id", StringType(), True)
             ]),
@@ -137,7 +141,7 @@ class BigDataStreamingConsumer:
                 StructField("sensor_id", StringType(), True),
                 StructField("sensor_type", StringType(), True),
                 StructField("sensor_location", StringType(), True),
-                StructField("timestamp", TimestampType(), True),
+                StructField("timestamp", StringType(), True),  # Changed to StringType to match ISO format
                 StructField("value", DoubleType(), True),
                 StructField("unit", StringType(), True),
                 StructField("status", StringType(), True),
@@ -271,7 +275,77 @@ class BigDataStreamingConsumer:
                     processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
-            
+
+            # Таблица для хранения сырых транзакционных данных
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raw_transactions (
+                    id SERIAL PRIMARY KEY,
+                    transaction_id VARCHAR(100) NOT NULL,
+                    user_id VARCHAR(100),
+                    user_name VARCHAR(200),
+                    user_city VARCHAR(100),
+                    user_age INTEGER,
+                    user_email VARCHAR(200),
+                    transaction_amount DECIMAL(12, 2),
+                    transaction_currency VARCHAR(10),
+                    transaction_category VARCHAR(100),
+                    merchant VARCHAR(200),
+                    transaction_date TIMESTAMP,
+                    payment_method VARCHAR(50),
+                    status VARCHAR(20),
+                    device VARCHAR(50),
+                    ip_address VARCHAR(50),
+                    metadata JSONB,
+                    data_type VARCHAR(20),
+                    batch_id VARCHAR(100),
+                    kafka_timestamp TIMESTAMP,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(transaction_id)
+                )
+            """)
+
+            # Таблица для хранения сырых данных активности пользователей
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raw_activities (
+                    id SERIAL PRIMARY KEY,
+                    activity_id VARCHAR(100) NOT NULL,
+                    user_id VARCHAR(100),
+                    user_name VARCHAR(200),
+                    activity_type VARCHAR(50),
+                    page_url VARCHAR(500),
+                    session_duration INTEGER,
+                    timestamp TIMESTAMP,
+                    device_info JSONB,
+                    location JSONB,
+                    data_type VARCHAR(20),
+                    batch_id VARCHAR(100),
+                    kafka_timestamp TIMESTAMP,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(activity_id)
+                )
+            """)
+
+            # Таблица для хранения сырых данных датчиков IoT
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS raw_sensors (
+                    id SERIAL PRIMARY KEY,
+                    sensor_id VARCHAR(100),
+                    sensor_type VARCHAR(50),
+                    sensor_location VARCHAR(100),
+                    timestamp TIMESTAMP,
+                    value DECIMAL(10, 3),
+                    unit VARCHAR(20),
+                    status VARCHAR(20),
+                    battery_level INTEGER,
+                    signal_strength INTEGER,
+                    data_type VARCHAR(20),
+                    batch_id VARCHAR(100),
+                    kafka_timestamp TIMESTAMP,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(sensor_id, timestamp)
+                )
+            """)
+
             cursor.close()
             conn.close()
             logger.info("Таблицы в PostgreSQL созданы/проверены")
@@ -297,7 +371,7 @@ class BigDataStreamingConsumer:
         return df.selectExpr("CAST(value AS STRING) as json", 
                             "CAST(timestamp AS TIMESTAMP) as kafka_timestamp")
     
-    def parse_json_data(self, df: DataFrame) -> Tuple[DataFrame, DataFrame, DataFrame]:
+    def parse_json_data(self, df: DataFrame) -> Tuple[DataFrame, DataFrame, DataFrame, DataFrame, DataFrame, DataFrame]:
         """Парсинг JSON данных с определением типа"""
         # Создаем общую схему для начального парсинга
         common_schema = StructType([
@@ -307,17 +381,17 @@ class BigDataStreamingConsumer:
 
         # Сначала парсим только для определения типа данных
         parsed_df = df.select(
-            from_json(col("json"), common_schema).alias("metadata"),
+            from_json(col("json"), common_schema).alias("parsed"),
             col("json"),
             col("kafka_timestamp")
         ).select(
-            col("metadata.data_type").alias("data_type"),
-            col("metadata.batch_id").alias("batch_id"),
+            col("parsed.data_type").alias("data_type"),
+            col("parsed.batch_id").alias("batch_id"),
             col("json"),
             col("kafka_timestamp")
         )
 
-        # Разделяем по типам данных
+        # Разделяем по типам данных для агрегаций
         transaction_df = parsed_df.filter(col("data_type") == "transaction") \
             .select(from_json(col("json"), self.schemas["transaction"]).alias("data")) \
             .select("data.*")
@@ -330,15 +404,44 @@ class BigDataStreamingConsumer:
             .select(from_json(col("json"), self.schemas["sensor"]).alias("data")) \
             .select("data.*")
 
-        return transaction_df, activity_df, sensor_df
+        # Создаем DataFrames для сырых данных (с kafka_timestamp)
+        raw_transaction_df = parsed_df.filter(col("data_type") == "transaction") \
+            .select(from_json(col("json"), self.schemas["transaction"]).alias("data"), col("kafka_timestamp")) \
+            .select("data.*", "kafka_timestamp")
+
+        raw_activity_df = parsed_df.filter(col("data_type") == "activity") \
+            .select(from_json(col("json"), self.schemas["activity"]).alias("data"), col("kafka_timestamp")) \
+            .select(
+                "data.activity_id",
+                "data.user_id",
+                "data.user_name",
+                "data.activity_type",
+                "data.page_url",
+                "data.session_duration",
+                "data.timestamp",
+                to_json("data.device_info").alias("device_info"),  # Convert MapType to JSON string
+                to_json("data.location").alias("location"),  # Convert StructType to JSON string
+                "data.data_type",
+                "data.batch_id",
+                "kafka_timestamp"
+            )
+
+        raw_sensor_df = parsed_df.filter(col("data_type") == "sensor") \
+            .select(from_json(col("json"), self.schemas["sensor"]).alias("data"), col("kafka_timestamp")) \
+            .select("data.*", "kafka_timestamp")
+
+        return transaction_df, activity_df, sensor_df, raw_transaction_df, raw_activity_df, raw_sensor_df
     
     def process_transactions(self, transaction_df: DataFrame) -> List[DataFrame]:
         """Обработка транзакционных данных"""
+        # Convert transaction_date to timestamp
+        transaction_df = transaction_df.withColumn("transaction_date_ts", to_timestamp(col("transaction_date")))
+
         # Основные агрегации по часам
         hourly_stats = transaction_df \
-            .withWatermark("transaction_date", "1 hour") \
+            .withWatermark("transaction_date_ts", "1 hour") \
             .groupBy(
-                window(col("transaction_date"), "1 hour").alias("window"),
+                window(col("transaction_date_ts"), "1 hour").alias("window"),
                 col("user_city"),
                 col("transaction_category")
             ) \
@@ -360,12 +463,12 @@ class BigDataStreamingConsumer:
                 col("min_amount"),
                 col("max_amount")
             )
-        
+
         # Топ пользователей по тратам
         top_users = transaction_df \
-            .withWatermark("transaction_date", "1 hour") \
+            .withWatermark("transaction_date_ts", "1 hour") \
             .groupBy(
-                window(col("transaction_date"), "1 hour").alias("window"),
+                window(col("transaction_date_ts"), "1 hour").alias("window"),
                 col("user_id"),
                 col("user_name"),
                 col("user_city")
@@ -383,12 +486,12 @@ class BigDataStreamingConsumer:
                 col("total_spent"),
                 col("transaction_count")
             )
-        
+
         # Статистика по методам оплаты
         payment_stats = transaction_df \
-            .withWatermark("transaction_date", "30 minutes") \
+            .withWatermark("transaction_date_ts", "30 minutes") \
             .groupBy(
-                window(col("transaction_date"), "30 minutes").alias("window"),
+                window(col("transaction_date_ts"), "30 minutes").alias("window"),
                 col("payment_method")
             ) \
             .agg(
@@ -404,12 +507,12 @@ class BigDataStreamingConsumer:
                 col("total_amount"),
                 col("avg_amount")
             )
-        
+
         # Статистика по устройствам
         device_stats = transaction_df \
-            .withWatermark("transaction_date", "30 minutes") \
+            .withWatermark("transaction_date_ts", "30 minutes") \
             .groupBy(
-                window(col("transaction_date"), "30 minutes").alias("window"),
+                window(col("transaction_date_ts"), "30 minutes").alias("window"),
                 col("device").alias("device_type")
             ) \
             .agg(
@@ -423,15 +526,18 @@ class BigDataStreamingConsumer:
                 col("transaction_count"),
                 col("success_rate")
             )
-        
+
         return [hourly_stats, top_users, payment_stats, device_stats]
     
     def process_activities(self, activity_df: DataFrame) -> DataFrame:
         """Обработка данных активности пользователей"""
+        # Convert timestamp to timestamp type
+        activity_df = activity_df.withColumn("timestamp_ts", to_timestamp(col("timestamp")))
+
         activity_stats = activity_df \
-            .withWatermark("timestamp", "30 minutes") \
+            .withWatermark("timestamp_ts", "30 minutes") \
             .groupBy(
-                window(col("timestamp"), "30 minutes").alias("window"),
+                window(col("timestamp_ts"), "30 minutes").alias("window"),
                 col("activity_type"),
                 col("location.city").alias("city")
             ) \
@@ -447,15 +553,18 @@ class BigDataStreamingConsumer:
                 col("activity_count"),
                 col("avg_session_duration")
             )
-        
+
         return activity_stats
     
     def process_sensors(self, sensor_df: DataFrame) -> DataFrame:
         """Обработка данных датчиков IoT"""
+        # Convert timestamp to timestamp type
+        sensor_df = sensor_df.withColumn("timestamp_ts", to_timestamp(col("timestamp")))
+
         sensor_anomalies = sensor_df \
-            .withWatermark("timestamp", "10 minutes") \
+            .withWatermark("timestamp_ts", "10 minutes") \
             .groupBy(
-                window(col("timestamp"), "10 minutes").alias("window"),
+                window(col("timestamp_ts"), "10 minutes").alias("window"),
                 col("sensor_id"),
                 col("sensor_type"),
                 col("sensor_location"),
@@ -478,7 +587,7 @@ class BigDataStreamingConsumer:
                 col("avg_value"),
                 col("std_value")
             )
-        
+
         return sensor_anomalies
     
     def calculate_hourly_metrics(self,
@@ -486,11 +595,14 @@ class BigDataStreamingConsumer:
                                 activity_df: DataFrame,
                                 sensor_df: DataFrame) -> DataFrame:
         """Расчет сводных метрик по часам"""
+        # Convert transaction_date to timestamp type
+        transaction_df = transaction_df.withColumn("transaction_date_ts", to_timestamp(col("transaction_date")))
+
         # Агрегация транзакций по часам
         hourly_metrics = transaction_df \
-            .withWatermark("transaction_date", "1 hour") \
+            .withWatermark("transaction_date_ts", "1 hour") \
             .groupBy(
-                window(col("transaction_date"), "1 hour").alias("window")
+                window(col("transaction_date_ts"), "1 hour").alias("window")
             ) \
             .agg(
                 count("*").alias("total_transactions"),
@@ -590,53 +702,67 @@ class BigDataStreamingConsumer:
             kafka_df = self.read_from_kafka()
             
             # 2. Парсинг и разделение данных
-            transaction_df, activity_df, sensor_df = self.parse_json_data(kafka_df)
-            
+            transaction_df, activity_df, sensor_df, raw_transaction_df, raw_activity_df, raw_sensor_df = self.parse_json_data(kafka_df)
+
             # 3. Обработка разных типов данных
             logger.info("Обработка транзакционных данных...")
             transaction_results = self.process_transactions(transaction_df)
-            
+
             logger.info("Обработка данных активности...")
             activity_results = self.process_activities(activity_df)
-            
+
             logger.info("Обработка данных датчиков...")
             sensor_results = self.process_sensors(sensor_df)
-            
+
             logger.info("Расчет сводных метрик...")
             hourly_metrics = self.calculate_hourly_metrics(
                 transaction_df, activity_df, sensor_df
             )
-            
+
             # 4. Запуск записи в PostgreSQL
             logger.info("Запуск записи в PostgreSQL...")
-            
+
             queries = []
-            
+
             # Таблицы для транзакций
             transaction_tables = [
                 "transaction_hourly_stats",
-                "top_users", 
+                "top_users",
                 "payment_method_stats",
                 "device_stats"
             ]
-            
+
             for i, result_df in enumerate(transaction_results):
                 query = self.write_to_postgres(result_df, transaction_tables[i])
                 queries.append(query)
                 logger.info(f"Запись запущена для таблицы: {transaction_tables[i]}")
-            
+
             # Таблицы для активности и датчиков
             query_activity = self.write_to_postgres(activity_results, "activity_stats")
             queries.append(query_activity)
             logger.info("Запись запущена для таблицы: activity_stats")
-            
+
             query_sensor = self.write_to_postgres(sensor_results, "sensor_anomalies")
             queries.append(query_sensor)
             logger.info("Запись запущена для таблицы: sensor_anomalies")
-            
+
             query_metrics = self.write_to_postgres(hourly_metrics, "hourly_metrics")
             queries.append(query_metrics)
             logger.info("Запись запущена для таблицы: hourly_metrics")
+
+            # Запись сырых данных
+            logger.info("Запись сырых данных...")
+            query_raw_transactions = self.write_to_postgres(raw_transaction_df, "raw_transactions")
+            queries.append(query_raw_transactions)
+            logger.info("Запись запущена для таблицы: raw_transactions")
+
+            query_raw_activities = self.write_to_postgres(raw_activity_df, "raw_activities")
+            queries.append(query_raw_activities)
+            logger.info("Запись запущена для таблицы: raw_activities")
+
+            query_raw_sensors = self.write_to_postgres(raw_sensor_df, "raw_sensors")
+            queries.append(query_raw_sensors)
+            logger.info("Запись запущена для таблицы: raw_sensors")
             
             # 5. Ожидание завершения всех запросов
             logger.info("Все запросы запущены. Ожидание завершения...")

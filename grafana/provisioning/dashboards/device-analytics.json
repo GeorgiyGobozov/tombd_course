@@ -1,9 +1,9 @@
 {
   "dashboard": {
     "id": null,
-    "uid": "system-monitoring",
-    "title": "System Monitoring Dashboard",
-    "tags": ["system", "monitoring", "performance"],
+    "uid": "device-analytics",
+    "title": "Device Analytics Dashboard",
+    "tags": ["device", "analytics", "transactions"],
     "timezone": "browser",
     "schemaVersion": 38,
     "version": 1,
@@ -11,96 +11,11 @@
     "panels": [
       {
         "id": 1,
-        "title": "Общее количество аномалий датчиков",
-        "type": "stat",
-        "datasource": "PostgreSQL",
-        "pluginVersion": "9.5.2",
-        "gridPos": {"h": 4, "w": 6, "x": 0, "y": 0},
-        "fieldConfig": {
-          "defaults": {
-            "color": {"mode": "value"},
-            "custom": {
-              "align": "center",
-              "displayMode": "gradient-gauge"
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "green", "value": null},
-                {"color": "orange", "value": 10},
-                {"color": "red", "value": 50}
-              ]
-            }
-          },
-          "overrides": []
-        },
-        "options": {
-          "orientation": "auto",
-          "reduceOptions": {
-            "values": false,
-            "calcs": ["lastNotNull"],
-            "fields": ""
-          },
-          "textMode": "auto"
-        },
-        "targets": [
-          {
-            "datasource": "PostgreSQL",
-            "rawSql": "SELECT COUNT(*) as total_anomalies FROM sensor_anomalies WHERE status IN ('warning', 'critical')",
-            "format": "table",
-            "refId": "A"
-          }
-        ]
-      },
-      {
-        "id": 2,
-        "title": "Средний уровень сигнала датчиков",
-        "type": "gauge",
-        "datasource": "PostgreSQL",
-        "pluginVersion": "9.5.2",
-        "gridPos": {"h": 4, "w": 6, "x": 6, "y": 0},
-        "fieldConfig": {
-          "defaults": {
-            "color": {"mode": "thresholds"},
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "red", "value": null},
-                {"color": "orange", "value": 2},
-                {"color": "green", "value": 4}
-              ]
-            }
-          },
-          "overrides": []
-        },
-        "options": {
-          "orientation": "auto",
-          "reduceOptions": {
-            "values": false,
-            "calcs": ["lastNotNull"],
-            "fields": ""
-          },
-          "showThresholdLabels": false,
-          "showThresholdMarkers": true
-        },
-        "targets": [
-          {
-            "datasource": "PostgreSQL",
-            "rawSql": "SELECT AVG(signal_strength) as avg_signal FROM sensor_anomalies",
-            "format": "table",
-            "refId": "A"
-          }
-        ]
-      },
-      {
-        "id": 3,
-        "title": "Активность пользователей по типам",
+        "title": "Транзакции по устройствам",
         "type": "barchart",
         "datasource": "PostgreSQL",
         "pluginVersion": "9.5.2",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
         "fieldConfig": {
           "defaults": {
             "color": {"mode": "palette-classic"},
@@ -141,25 +56,25 @@
             "calcs": []
           },
           "orientation": "auto",
-          "xField": "activity_type",
-          "colorByField": "activity_type"
+          "xField": "device_type",
+          "colorByField": "device_type"
         },
         "targets": [
           {
             "datasource": "PostgreSQL",
-            "rawSql": "SELECT activity_type, SUM(activity_count) as total_activities FROM activity_stats GROUP BY activity_type ORDER BY total_activities DESC",
+            "rawSql": "SELECT device_type, SUM(transaction_count) as total_transactions FROM device_stats GROUP BY device_type ORDER BY total_transactions DESC",
             "format": "table",
             "refId": "A"
           }
         ]
       },
       {
-        "id": 4,
-        "title": "Распределение аномалий по типам датчиков",
+        "id": 2,
+        "title": "Успешность транзакций по устройствам",
         "type": "piechart",
         "datasource": "PostgreSQL",
         "pluginVersion": "9.5.2",
-        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
         "fieldConfig": {
           "defaults": {
             "color": {"mode": "palette-classic"},
@@ -183,19 +98,19 @@
         "targets": [
           {
             "datasource": "PostgreSQL",
-            "rawSql": "SELECT sensor_type, COUNT(*) as anomaly_count FROM sensor_anomalies WHERE status IN ('warning', 'critical') GROUP BY sensor_type",
+            "rawSql": "SELECT device_type, AVG(success_rate) as avg_success_rate FROM device_stats GROUP BY device_type ORDER BY avg_success_rate DESC",
             "format": "table",
             "refId": "A"
           }
         ]
       },
       {
-        "id": 5,
-        "title": "Уровень заряда датчиков",
+        "id": 3,
+        "title": "Успешность транзакций по времени",
         "type": "timeseries",
         "datasource": "PostgreSQL",
         "pluginVersion": "9.5.2",
-        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
         "fieldConfig": {
           "defaults": {
             "color": {"mode": "palette-classic"},
@@ -240,19 +155,19 @@
         "targets": [
           {
             "datasource": "PostgreSQL",
-            "rawSql": "SELECT window_start as time, sensor_id, battery_level FROM sensor_anomalies ORDER BY window_start",
+            "rawSql": "SELECT window_start as time, device_type, success_rate FROM device_stats ORDER BY window_start",
             "format": "time_series",
             "refId": "A"
           }
         ]
       },
       {
-        "id": 6,
-        "title": "Средняя продолжительность сессий",
+        "id": 4,
+        "title": "Общее количество транзакций по устройствам",
         "type": "stat",
         "datasource": "PostgreSQL",
         "pluginVersion": "9.5.2",
-        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 12},
+        "gridPos": {"h": 4, "w": 6, "x": 12, "y": 8},
         "fieldConfig": {
           "defaults": {
             "color": {"mode": "value"},
@@ -265,53 +180,8 @@
               "mode": "absolute",
               "steps": [
                 {"color": "blue", "value": null},
-                {"color": "green", "value": 300},
-                {"color": "red", "value": 1200}
-              ]
-            },
-            "unit": "s"
-          },
-          "overrides": []
-        },
-        "options": {
-          "orientation": "auto",
-          "reduceOptions": {
-            "values": false,
-            "calcs": ["lastNotNull"],
-            "fields": ""
-          },
-          "textMode": "auto"
-        },
-        "targets": [
-          {
-            "datasource": "PostgreSQL",
-            "rawSql": "SELECT AVG(avg_session_duration) as avg_session FROM activity_stats",
-            "format": "table",
-            "refId": "A"
-          }
-        ]
-      },
-      {
-        "id": 7,
-        "title": "Количество уникальных датчиков",
-        "type": "stat",
-        "datasource": "PostgreSQL",
-        "pluginVersion": "9.5.2",
-        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 12},
-        "fieldConfig": {
-          "defaults": {
-            "color": {"mode": "value"},
-            "custom": {
-              "align": "center",
-              "displayMode": "gradient-gauge"
-            },
-            "mappings": [],
-            "thresholds": {
-              "mode": "absolute",
-              "steps": [
-                {"color": "blue", "value": null},
-                {"color": "green", "value": 50},
-                {"color": "red", "value": 200}
+                {"color": "green", "value": 1000},
+                {"color": "red", "value": 5000}
               ]
             }
           },
@@ -329,7 +199,52 @@
         "targets": [
           {
             "datasource": "PostgreSQL",
-            "rawSql": "SELECT COUNT(DISTINCT sensor_id) as unique_sensors FROM sensor_anomalies",
+            "rawSql": "SELECT SUM(transaction_count) as total_transactions FROM device_stats",
+            "format": "table",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Средняя успешность транзакций",
+        "type": "stat",
+        "datasource": "PostgreSQL",
+        "pluginVersion": "9.5.2",
+        "gridPos": {"h": 4, "w": 6, "x": 18, "y": 8},
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "value"},
+            "custom": {
+              "align": "center",
+              "displayMode": "gradient-gauge"
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "blue", "value": null},
+                {"color": "green", "value": 90},
+                {"color": "red", "value": 70}
+              ]
+            },
+            "unit": "percent"
+          },
+          "overrides": []
+        },
+        "options": {
+          "orientation": "auto",
+          "reduceOptions": {
+            "values": false,
+            "calcs": ["lastNotNull"],
+            "fields": ""
+          },
+          "textMode": "auto"
+        },
+        "targets": [
+          {
+            "datasource": "PostgreSQL",
+            "rawSql": "SELECT AVG(success_rate) as avg_success_rate FROM device_stats",
             "format": "table",
             "refId": "A"
           }
@@ -353,5 +268,6 @@
     },
     "links": []
   },
+  "folderTitle": "BigData Dashboards",
   "overwrite": true
 }

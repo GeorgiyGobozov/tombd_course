@@ -13,10 +13,13 @@ COPY requirements.txt /tmp/requirements.txt
 RUN pip3 install --no-cache-dir --upgrade pip && \
     pip3 install --no-cache-dir -r /tmp/requirements.txt
 
-# Настройка Spark
+# Настройка Spark и Hadoop
 ENV SPARK_HOME=/opt/spark
+ENV HADOOP_HOME=/opt/hadoop
 ENV PYSPARK_PYTHON=python3
-ENV PATH=$PATH:$SPARK_HOME/bin
+ENV PATH=$PATH:$SPARK_HOME/bin:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
+ENV HADOOP_CONF_DIR=$HADOOP_HOME/etc/hadoop
+ENV SPARK_DIST_CLASSPATH=$HADOOP_HOME/etc/hadoop:$HADOOP_HOME/share/hadoop/common/lib/*:$HADOOP_HOME/share/hadoop/common/*:$HADOOP_HOME/share/hadoop/hdfs:$HADOOP_HOME/share/hadoop/hdfs/lib/*:$HADOOP_HOME/share/hadoop/hdfs/*:$HADOOP_HOME/share/hadoop/mapreduce/lib/*:$HADOOP_HOME/share/hadoop/mapreduce/*:$HADOOP_HOME/share/hadoop/yarn:$HADOOP_HOME/share/hadoop/yarn/lib/*:$HADOOP_HOME/share/hadoop/yarn/*
 
 # Создание директории для чекпоинтов
 RUN mkdir -p /tmp/checkpoint && chmod 777 /tmp/checkpoint

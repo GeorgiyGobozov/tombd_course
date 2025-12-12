@@ -60,6 +60,95 @@ services:
       - bigdata-network
     restart: unless-stopped
 
+  # ============ HADOOP NAMENODE ============
+  hadoop-namenode:
+    image: apache/hadoop:3.3.6
+    container_name: hadoop-namenode
+    user: root
+    environment:
+      CLUSTER_NAME: bigdata-cluster
+      HDFS_NAMENODE_USER_NAME: root
+      HDFS_DATANODE_USER_NAME: root
+      HDFS_SECONDARYNAMENODE_USER_NAME: root
+    command: ["sh", "-c", "rm -rf /hadoop/dfs/name/* && mkdir -p /hadoop/dfs/name && hdfs namenode -format -force -nonInteractive && hdfs namenode"]
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+    volumes:
+      - hadoop-namenode:/hadoop/dfs/name
+      - ./hadoop-config:/opt/hadoop/etc/hadoop
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9870 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============ HADOOP DATANODE ============
+  hadoop-datanode:
+    image: apache/hadoop:3.3.6
+    container_name: hadoop-datanode
+    depends_on:
+      hadoop-namenode:
+        condition: service_healthy
+    user: root
+    environment:
+      HDFS_NAMENODE_USER_NAME: root
+      HDFS_DATANODE_USER_NAME: root
+      HDFS_SECONDARYNAMENODE_USER_NAME: root
+    command: ["sh", "-c", "mkdir -p /hadoop/dfs/data && hdfs datanode"]
+    ports:
+      - "9864:9864"
+    volumes:
+      - hadoop-datanode:/hadoop/dfs/data
+      - ./hadoop-config:/opt/hadoop/etc/hadoop
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
+  # ============ HADOOP RESOURCEMANAGER ============
+  hadoop-resourcemanager:
+    image: apache/hadoop:3.3.6
+    container_name: hadoop-resourcemanager
+    depends_on:
+      - hadoop-namenode
+    environment:
+      YARN_RESOURCEMANAGER_USER_NAME: root
+      HADOOP_MAPRED_USER_NAME: root
+      YARN_NODEMANAGER_USER_NAME: root
+    command: ["yarn", "resourcemanager"]
+    ports:
+      - "8088:8088"
+    volumes:
+      - hadoop-yarn:/hadoop/yarn
+      - ./hadoop-config:/opt/hadoop/etc/hadoop
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
+  # ============ HADOOP NODEMANAGER ============
+  hadoop-nodemanager:
+    image: apache/hadoop:3.3.6
+    container_name: hadoop-nodemanager
+    depends_on:
+      - hadoop-resourcemanager
+    environment:
+      YARN_RESOURCEMANAGER_USER_NAME: root
+      HADOOP_MAPRED_USER_NAME: root
+      YARN_NODEMANAGER_USER_NAME: root
+      SERVICE_PRECONDITION: "hadoop-resourcemanager:8088"
+    command: ["yarn", "nodemanager"]
+    ports:
+      - "8042:8042"
+    volumes:
+      - hadoop-yarn:/hadoop/yarn
+      - ./hadoop-config:/opt/hadoop/etc/hadoop
+    networks:
+      - bigdata-network
+    restart: unless-stopped
+
   # ============ SPARK MASTER ============
   spark-master:
     build:
@@ -71,6 +160,9 @@ services:
       --host spark-master
       --port 7077
       --webui-port 8080
+    depends_on:
+      - hadoop-namenode
+      - hadoop-resourcemanager
     ports:
       - "7077:7077"
       - "8080:8080"
@@ -81,9 +173,13 @@ services:
       SPARK_LOCAL_IP: spark-master
       SPARK_USER: spark
       HADOOP_USER_NAME: spark
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      HADOOP_HOME: /opt/hadoop
+      HDFS_NAMENODE: hadoop-namenode:9000
     volumes:
       - spark-events:/tmp/spark-events
       - spark-logs:/opt/spark/logs
+      - ./hadoop-config:/opt/hadoop/etc/hadoop
     networks:
       - bigdata-network
     restart: unless-stopped
@@ -100,6 +196,8 @@ services:
       --webui-port 8081
     depends_on:
       - spark-master
+      - hadoop-namenode
+      - hadoop-resourcemanager
     environment:
       SPARK_WORKER_CORES: 2
       SPARK_WORKER_MEMORY: 2g
@@ -108,11 +206,15 @@ services:
       SPARK_LOCAL_IP: spark-worker-1
       SPARK_USER: spark
       HADOOP_USER_NAME: spark
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      HADOOP_HOME: /opt/hadoop
+      HDFS_NAMENODE: hadoop-namenode:9000
     ports:
       - "8081:8081"
     volumes:
       - spark-events:/tmp/spark-events
       - spark-logs:/opt/spark/logs
+      - hadoop-config:/opt/hadoop/etc/hadoop
     networks:
       - bigdata-network
     restart: unless-stopped
@@ -129,6 +231,8 @@ services:
       --webui-port 8082
     depends_on:
       - spark-master
+      - hadoop-namenode
+      - hadoop-resourcemanager
     environment:
       SPARK_WORKER_CORES: 2
       SPARK_WORKER_MEMORY: 2g
@@ -137,11 +241,15 @@ services:
       SPARK_LOCAL_IP: spark-worker-2
       SPARK_USER: spark
       HADOOP_USER_NAME: spark
+      HADOOP_CONF_DIR: /opt/hadoop/etc/hadoop
+      HADOOP_HOME: /opt/hadoop
+      HDFS_NAMENODE: hadoop-namenode:9000
     ports:
       - "8082:8082"
     volumes:
       - spark-events:/tmp/spark-events
       - spark-logs:/opt/spark/logs
+      - hadoop-config:/opt/hadoop/etc/hadoop
     networks:
       - bigdata-network
     restart: unless-stopped
@@ -164,6 +272,7 @@ services:
     volumes:
       - spark-events:/tmp/spark-events
       - spark-logs:/opt/spark/logs
+      - hadoop-config:/opt/hadoop/etc/hadoop
     networks:
       - bigdata-network
     restart: unless-stopped
@@ -275,3 +384,8 @@ volumes:
   spark-checkpoints:
   postgres-data:
   grafana-data:
+  hadoop-namenode:
+  hadoop-datanode:
+  hadoop-data:
+  hadoop-yarn:
+  hadoop-config:
